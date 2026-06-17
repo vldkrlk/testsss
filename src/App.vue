@@ -220,6 +220,22 @@ const selectAnswer = (test, idx) => {
 
 const loaded = computed(() => tests.value.length > 0)
 const hasSavedSuites = computed(() => savedSuites.value.length > 0)
+const resultSummary = computed(() => {
+  const total = tests.value.length
+  const answered = tests.value.filter((test) => test.status !== null).length
+  const correct = tests.value.filter((test) => test.status === 'correct').length
+  const wrong = tests.value.filter((test) => test.status === 'wrong').length
+  const percent = total > 0 ? Math.round((correct / total) * 100) : 0
+
+  return {
+    total,
+    answered,
+    correct,
+    wrong,
+    percent,
+    isComplete: total > 0 && answered === total,
+  }
+})
 
 loadTests()
 </script>
@@ -335,6 +351,30 @@ loadTests()
           </p>
         </li>
       </ol>
+
+      <div class="summary">
+        <div>
+          <h3>Результат</h3>
+          <p>
+            <span v-if="resultSummary.isComplete">Тест завершено.</span>
+            <span v-else>Пройдено {{ resultSummary.answered }} з {{ resultSummary.total }}.</span>
+          </p>
+        </div>
+        <div class="summary-stats">
+          <div class="summary-stat">
+            <span>Правильно</span>
+            <strong>{{ resultSummary.correct }}</strong>
+          </div>
+          <div class="summary-stat">
+            <span>Помилки</span>
+            <strong>{{ resultSummary.wrong }}</strong>
+          </div>
+          <div class="summary-stat">
+            <span>Відсоток</span>
+            <strong>{{ resultSummary.percent }}%</strong>
+          </div>
+        </div>
+      </div>
     </section>
   </main>
 </template>
@@ -554,6 +594,47 @@ select:disabled {
   color: #b91c1c;
   font-weight: 600;
 }
+.summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  margin-top: 28px;
+  padding-top: 22px;
+  border-top: 1px solid #e5e7eb;
+}
+.summary h3 {
+  margin: 0 0 6px;
+  font-size: 20px;
+  line-height: 1.2;
+}
+.summary p {
+  margin: 0;
+  color: #4b5563;
+}
+.summary-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(82px, 1fr));
+  gap: 10px;
+}
+.summary-stat {
+  min-width: 82px;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.summary-stat span {
+  display: block;
+  margin-bottom: 4px;
+  color: #6b7280;
+  font-size: 13px;
+}
+.summary-stat strong {
+  display: block;
+  font-size: 22px;
+  line-height: 1.1;
+}
 @media (max-width: 640px) {
   .app-shell {
     margin: 12px auto;
@@ -594,6 +675,13 @@ select:disabled {
   }
   .answer-button {
     padding: 12px;
+  }
+  .summary {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .summary-stats {
+    grid-template-columns: 1fr;
   }
 }
 @media (max-width: 380px) {
