@@ -309,10 +309,8 @@ loadTests()
               :class="[
                 'answer-button',
                 isAnswerSelected(test, index) ? 'selected' : '',
-                test.status !== null && isAnswerSelected(test, index)
-                  ? test.status === 'correct'
-                    ? 'correct'
-                    : 'wrong'
+                test.status !== null && isAnswerSelected(test, index) && !answer.isCorrect
+                  ? 'wrong'
                   : '',
                 test.status !== null && answer.isCorrect ? 'correct' : '',
               ]"
