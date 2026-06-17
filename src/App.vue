@@ -1,10 +1,32 @@
 <script setup>
 import { ref, computed } from 'vue'
-import { testSuites } from './testSuites'
 
-const selectedSuiteId = ref(testSuites[0]?.id ?? '')
+const STORAGE_KEY = 'uploaded-test-suites'
+
+const readStoredSuites = () => {
+  try {
+    const data = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]')
+    if (!Array.isArray(data)) return []
+    return data.filter(
+      (suite) =>
+        suite &&
+        typeof suite.id === 'string' &&
+        typeof suite.title === 'string' &&
+        Array.isArray(suite.questions),
+    )
+  } catch {
+    return []
+  }
+}
+
+const savedSuites = ref(readStoredSuites())
+const selectedSuiteId = ref(savedSuites.value[0]?.id ?? '')
 const tests = ref([])
 const error = ref('')
+
+const saveSuites = () => {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(savedSuites.value))
+}
 
 const normalizeTest = (item, index) => {
   const text = item.question || item.title || item.text || item.q || `Питання ${index + 1}`
@@ -31,12 +53,34 @@ const normalizeTest = (item, index) => {
   if (Array.isArray(item.a)) pushAnswers(item.a)
 
   const correctIndex = typeof item.correctIndex === 'number' ? item.correctIndex : undefined
+  const correctIndexes = Array.isArray(item.correctIndexes)
+    ? item.correctIndexes
+    : Array.isArray(item.correctIndices)
+      ? item.correctIndices
+      : undefined
   const correctValue = item.correctAnswer ?? item.answer ?? item.correct
+  const correctValues = Array.isArray(item.correctAnswers)
+    ? item.correctAnswers
+    : Array.isArray(item.answersCorrect)
+      ? item.answersCorrect
+      : undefined
 
   if (answers.length > 0) {
-    if (typeof correctIndex === 'number' && answers[correctIndex]) {
+    if (Array.isArray(correctIndexes)) {
+      const correctIndexSet = new Set(correctIndexes.filter((idx) => typeof idx === 'number'))
+      answers.forEach((answer, idx) => {
+        answer.isCorrect = correctIndexSet.has(idx)
+      })
+    } else if (typeof correctIndex === 'number' && answers[correctIndex]) {
       answers.forEach((answer, idx) => {
         answer.isCorrect = idx === correctIndex
+      })
+    } else if (Array.isArray(correctValues)) {
+      const normalizedCorrectValues = new Set(
+        correctValues.map((value) => String(value).trim().toLowerCase()),
+      )
+      answers.forEach((answer) => {
+        answer.isCorrect = normalizedCorrectValues.has(String(answer.text).trim().toLowerCase())
       })
     } else if (typeof correctValue !== 'undefined') {
       const normalizedCorrect = String(correctValue).trim().toLowerCase()
@@ -57,16 +101,33 @@ const normalizeTest = (item, index) => {
     id: index,
     text,
     answers,
-    selected: null,
+    isMultiple: answers.filter((answer) => answer.isCorrect).length > 1,
+    selected: [],
     status: null,
   }
 }
 
-const selectedSuite = computed(() => testSuites.find((suite) => suite.id === selectedSuiteId.value))
+const selectedSuite = computed(() =>
+  savedSuites.value.find((suite) => suite.id === selectedSuiteId.value),
+)
+
+const getQuestionsFromJson = (data) => {
+  if (Array.isArray(data)) return data
+  if (data && typeof data === 'object') {
+    if (Array.isArray(data.questions)) return data.questions
+    if (Array.isArray(data.tests)) return data.tests
+    if (Array.isArray(data.items)) return data.items
+  }
+  throw new Error('JSON має містити масив питань або поле questions/tests/items.')
+}
 
 const loadTests = (items = selectedSuite.value?.questions) => {
   error.value = ''
   try {
+    if (!selectedSuite.value && typeof items === 'undefined') {
+      tests.value = []
+      return
+    }
     if (!Array.isArray(items)) {
       throw new Error('Набір тестів має бути масивом запитань.')
     }
@@ -82,15 +143,83 @@ const loadTests = (items = selectedSuite.value?.questions) => {
   }
 }
 
+const createSuiteId = () => {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID()
+  return `uploaded-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+const uploadJson = async (event) => {
+  const file = event.target.files?.[0]
+  if (!file) return
+
+  error.value = ''
+  try {
+    const text = await file.text()
+    const data = JSON.parse(text)
+    const questions = getQuestionsFromJson(data)
+    const title =
+      data && !Array.isArray(data) && typeof data.title === 'string'
+        ? data.title
+        : file.name.replace(/\.json$/i, '')
+
+    const suite = {
+      id: createSuiteId(),
+      title: `Завантажено: ${title}`,
+      questions,
+    }
+    savedSuites.value = [...savedSuites.value, suite]
+    saveSuites()
+    selectedSuiteId.value = suite.id
+    loadTests(questions)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+    tests.value = []
+  } finally {
+    event.target.value = ''
+  }
+}
+
+const deleteSelectedSuite = () => {
+  if (!selectedSuite.value) return
+  savedSuites.value = savedSuites.value.filter((suite) => suite.id !== selectedSuiteId.value)
+  saveSuites()
+  selectedSuiteId.value = savedSuites.value[0]?.id ?? ''
+  loadTests()
+}
+
+const isAnswerSelected = (test, idx) => test.selected.includes(idx)
+
+const selectedMatchesCorrectAnswers = (test) => {
+  const selectedSet = new Set(test.selected)
+  return (
+    test.answers.every((answer, idx) => answer.isCorrect === selectedSet.has(idx)) &&
+    selectedSet.size > 0
+  )
+}
+
+const checkAnswer = (test) => {
+  if (test.status !== null || test.selected.length === 0) return
+  test.status = selectedMatchesCorrectAnswers(test) ? 'correct' : 'wrong'
+}
+
 const selectAnswer = (test, idx) => {
-  if (test.selected !== null) return
-  test.selected = idx
+  if (test.status !== null) return
   const answer = test.answers[idx]
   if (!answer) return
+
+  if (test.isMultiple) {
+    test.selected = isAnswerSelected(test, idx)
+      ? test.selected.filter((selectedIdx) => selectedIdx !== idx)
+      : [...test.selected, idx]
+    return
+  }
+
+  test.selected = [idx]
   test.status = answer.isCorrect ? 'correct' : 'wrong'
 }
 
 const loaded = computed(() => tests.value.length > 0)
+const hasSavedSuites = computed(() => savedSuites.value.length > 0)
 
 loadTests()
 </script>
@@ -102,13 +231,66 @@ loadTests()
 
       <div class="suite-row">
         <label class="select-label" for="test-suite">Оберіть тест</label>
-        <select id="test-suite" v-model="selectedSuiteId" @change="loadTests()">
-          <option v-for="suite in testSuites" :key="suite.id" :value="suite.id">
+        <select
+          id="test-suite"
+          v-model="selectedSuiteId"
+          :disabled="!hasSavedSuites"
+          @change="loadTests()"
+        >
+          <option value="" disabled>Завантажте JSON</option>
+          <option v-for="suite in savedSuites" :key="suite.id" :value="suite.id">
             {{ suite.title }} ({{ suite.questions.length }})
           </option>
         </select>
-        <button type="button" class="load-button" @click="loadTests()">Почати знову</button>
+        <div class="suite-actions">
+          <button type="button" class="load-button" :disabled="!selectedSuite" @click="loadTests()">
+            Почати знову
+          </button>
+          <button
+            type="button"
+            class="delete-button"
+            :disabled="!selectedSuite"
+            @click="deleteSelectedSuite"
+          >
+            Видалити
+          </button>
+          <label class="upload-button">
+            Завантажити JSON
+            <input type="file" accept="application/json,.json" @change="uploadJson" />
+          </label>
+        </div>
       </div>
+
+      <p v-if="!hasSavedSuites && !error" class="empty-state">
+        Завантажте JSON-файл, щоб додати перший тест у список.
+      </p>
+
+      <details class="json-example">
+        <summary>Приклад формату JSON</summary>
+        <pre><code>{
+  "title": "Мій тест",
+  "questions": [
+    {
+      "question": "Скільки буде 2 + 2?",
+      "answers": ["3", "4", "5"],
+      "correctIndex": 1
+    },
+    {
+      "question": "Оберіть парні числа",
+      "answers": ["1", "2", "3", "4"],
+      "correctIndexes": [1, 3]
+    },
+    {
+      "question": "Які твердження правильні?",
+      "answers": [
+        { "text": "Vue є JavaScript-фреймворком", "correct": true },
+        { "text": "JSON дозволяє коментарі", "correct": false },
+        { "text": "localStorage зберігає рядки", "correct": true }
+      ]
+    }
+  ]
+}</code></pre>
+      </details>
 
       <p v-if="error" class="error">Помилка: {{ error }}</p>
     </section>
@@ -126,16 +308,30 @@ loadTests()
               :key="index"
               :class="[
                 'answer-button',
-                test.selected === index ? (test.status === 'correct' ? 'correct' : 'wrong') : '',
-                test.selected !== null && answer.isCorrect ? 'correct' : '',
+                isAnswerSelected(test, index) ? 'selected' : '',
+                test.status !== null && isAnswerSelected(test, index)
+                  ? test.status === 'correct'
+                    ? 'correct'
+                    : 'wrong'
+                  : '',
+                test.status !== null && answer.isCorrect ? 'correct' : '',
               ]"
-              :disabled="test.selected !== null"
+              :disabled="test.status !== null"
               @click="selectAnswer(test, index)"
             >
               {{ answer.text }}
             </button>
           </div>
-          <p v-if="test.selected !== null" class="result">
+          <button
+            v-if="test.isMultiple"
+            type="button"
+            class="check-button"
+            :disabled="test.status !== null || test.selected.length === 0"
+            @click="checkAnswer(test)"
+          >
+            Перевірити
+          </button>
+          <p v-if="test.status !== null" class="result">
             <span v-if="test.status === 'correct'" class="result-correct">Правильно!</span>
             <span v-else class="result-wrong">Неправильно — правильна відповідь підсвічена.</span>
           </p>
@@ -188,8 +384,14 @@ loadTests()
 }
 .suite-row {
   display: grid;
-  grid-template-columns: auto minmax(220px, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
+  gap: 12px;
+}
+.suite-actions {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
   gap: 12px;
 }
 select {
@@ -203,11 +405,14 @@ select {
   background: #f8fafc;
   color: #111827;
 }
-.load-button {
+.load-button,
+.upload-button,
+.delete-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-height: 44px;
+  box-sizing: border-box;
   padding: 12px 18px;
   border: none;
   border-radius: 8px;
@@ -216,13 +421,60 @@ select {
   font-weight: 600;
   cursor: pointer;
   transition: background 0.2s ease;
+  white-space: nowrap;
 }
-.load-button:hover {
+.load-button:hover,
+.upload-button:hover {
   background: #1d4ed8;
+}
+.delete-button {
+  background: #f3f4f6;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+}
+.delete-button:hover {
+  background: #fee2e2;
+}
+.load-button:disabled,
+.delete-button:disabled,
+select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.upload-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.json-example {
+  margin-top: 14px;
+  color: #374151;
+}
+.json-example summary {
+  width: fit-content;
+  cursor: pointer;
+  font-weight: 600;
+}
+.json-example pre {
+  margin: 10px 0 0;
+  padding: 12px;
+  overflow-x: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #111827;
+  font-size: 13px;
+  line-height: 1.45;
 }
 .error {
   margin-top: 12px;
   color: #dc2626;
+}
+.empty-state {
+  margin: 12px 0 0;
+  color: #6b7280;
 }
 .test-list {
   list-style: decimal inside;
@@ -259,6 +511,10 @@ select {
 .answer-button:hover {
   background: #e2e8f0;
 }
+.answer-button.selected {
+  background: #dbeafe;
+  border-color: #2563eb;
+}
 .answer-button.correct {
   background: #d1fae5;
   border-color: #10b981;
@@ -266,6 +522,28 @@ select {
 .answer-button.wrong {
   background: #fee2e2;
   border-color: #ef4444;
+}
+.check-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  margin-top: 10px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  background: #2563eb;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.check-button:hover {
+  background: #1d4ed8;
+}
+.check-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 .result {
   margin-top: 10px;
@@ -298,7 +576,15 @@ select {
     grid-template-columns: 1fr;
     gap: 8px;
   }
-  .load-button {
+  .suite-actions {
+    grid-column: auto;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .load-button,
+  .upload-button,
+  .delete-button {
     width: 100%;
   }
   .test-list {
