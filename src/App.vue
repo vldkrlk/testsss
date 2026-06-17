@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 
 const STORAGE_KEY = 'uploaded-test-suites'
+const ACCESSIBILITY_KEY = 'colorblind-mode'
 
 const readStoredSuites = () => {
   try {
@@ -23,9 +24,15 @@ const savedSuites = ref(readStoredSuites())
 const selectedSuiteId = ref(savedSuites.value[0]?.id ?? '')
 const tests = ref([])
 const error = ref('')
+const colorblindMode = ref(localStorage.getItem(ACCESSIBILITY_KEY) === 'true')
 
 const saveSuites = () => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(savedSuites.value))
+}
+
+const toggleColorblindMode = () => {
+  colorblindMode.value = !colorblindMode.value
+  localStorage.setItem(ACCESSIBILITY_KEY, String(colorblindMode.value))
 }
 
 const normalizeTest = (item, index) => {
@@ -220,6 +227,12 @@ const selectAnswer = (test, idx) => {
 
 const loaded = computed(() => tests.value.length > 0)
 const hasSavedSuites = computed(() => savedSuites.value.length > 0)
+const getAnswerMarker = (test, answer, index) => {
+  if (!colorblindMode.value || test.status === null) return ''
+  if (answer.isCorrect) return 'Правильна'
+  if (isAnswerSelected(test, index)) return 'Зайва'
+  return ''
+}
 const resultSummary = computed(() => {
   const total = tests.value.length
   const answered = tests.value.filter((test) => test.status !== null).length
@@ -241,9 +254,19 @@ loadTests()
 </script>
 
 <template>
-  <main class="app-shell">
+  <main :class="['app-shell', colorblindMode ? 'colorblind-mode' : '']">
     <section class="card">
-      <h1>Тестовий програвач</h1>
+      <div class="header-row">
+        <h1>Тестовий програвач</h1>
+        <button
+          type="button"
+          :class="['mode-toggle', colorblindMode ? 'active' : '']"
+          :aria-pressed="colorblindMode"
+          @click="toggleColorblindMode"
+        >
+          Дальтонік
+        </button>
+      </div>
 
       <div class="suite-row">
         <label class="select-label" for="test-suite">Оберіть тест</label>
@@ -333,7 +356,10 @@ loadTests()
               :disabled="test.status !== null"
               @click="selectAnswer(test, index)"
             >
-              {{ answer.text }}
+              <span>{{ answer.text }}</span>
+              <span v-if="getAnswerMarker(test, answer, index)" class="answer-marker">
+                {{ getAnswerMarker(test, answer, index) }}
+              </span>
             </button>
           </div>
           <button
@@ -410,10 +436,36 @@ loadTests()
   line-height: 1.2;
 }
 .card h1 {
+  margin-bottom: 0;
   font-size: 32px;
 }
 .card h2 {
   font-size: 24px;
+}
+.header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.mode-toggle {
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #374151;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.mode-toggle:hover,
+.mode-toggle.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
 }
 .select-label {
   display: block;
@@ -532,6 +584,10 @@ select:disabled {
   gap: 10px;
 }
 .answer-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   width: 100%;
   min-height: 48px;
   box-sizing: border-box;
@@ -549,6 +605,9 @@ select:disabled {
 .answer-button:hover {
   background: #e2e8f0;
 }
+.answer-button > span:first-child {
+  min-width: 0;
+}
 .answer-button.selected {
   background: #dbeafe;
   border-color: #2563eb;
@@ -560,6 +619,34 @@ select:disabled {
 .answer-button.wrong {
   background: #fee2e2;
   border-color: #ef4444;
+}
+.answer-marker {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #111827;
+  font-size: 12px;
+  font-weight: 700;
+}
+.colorblind-mode .answer-button.correct {
+  background: #dbeafe;
+  border-color: #1d4ed8;
+  border-width: 2px;
+}
+.colorblind-mode .answer-button.wrong {
+  background: #fef3c7;
+  border-color: #b45309;
+  border-width: 2px;
+}
+.colorblind-mode .result-correct {
+  color: #1d4ed8;
+}
+.colorblind-mode .result-wrong {
+  color: #92400e;
+}
+.colorblind-mode .answer-marker {
+  border: 1px solid #111827;
 }
 .check-button {
   display: inline-flex;
@@ -654,6 +741,15 @@ select:disabled {
   .suite-row {
     grid-template-columns: 1fr;
     gap: 8px;
+  }
+  .header-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .mode-toggle {
+    width: 100%;
   }
   .suite-actions {
     grid-column: auto;
